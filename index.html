@@ -1,0 +1,370 @@
+<!doctype html>
+<html>
+<head>
+
+	<style>
+		body {
+			font: 11px/1.2em 'Helvetica Neue', Helvetica, Verdana, arial, sans-serif;
+			padding: 0;
+			margin: 0;
+		}
+
+		p {
+			margin: 5px 0;
+		}
+
+		#output {
+			position: absolute;
+			bottom: 10px;
+			right: 10px;
+			width: 150px;
+			height: 200px;
+			border: 1px solid #ccc;
+			overflow-y: auto;
+			pointer-events: none;
+		}
+
+		#stats {
+			position: absolute;
+			top: 10px;
+			left: 10px;
+			pointer-events: none;
+		}
+
+		#game {
+			position: absolute;
+			left: 0;
+			right: 0;
+			top: 0;
+			bottom: 0;
+		}
+
+		.circle {
+			position: absolute;
+			width: 80px;
+			height: 80px;
+			border-radius: 40px;
+			background-color: #66bbff;
+			opacity: 0;
+			-webkit-transform: scale(.2);
+
+			transition: opacity .5s;
+			transition: -webkit-transform .15s;
+		}
+			.circle.in {
+				opacity: 1;
+			}
+			.circle.out {
+				opacity: 0;
+				pointer-events: none;
+			}
+
+		#templates {
+			display: none;
+		}
+	</style>
+</head>
+<body>
+
+	<div id="stats"></div>
+
+	<div id="game"></div>
+
+	<div id="output"></div>
+
+	<div id="templates">
+		<div class="circle"></div>
+	</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+var react = (function () {
+
+	var actions = {},
+		socket,
+		outputEl,
+		templates,
+		game,
+		roundTime,
+		gameStarted = false,
+		stats;
+
+	var DOMQuery = function (selector) {
+		var el = document.querySelector(selector);
+
+		var DOMNode = {
+			element 	: el
+		}
+
+		return DOMNode;
+	};
+
+	var bindUserInput = function (el) {
+		el.onclick = function (e) {
+
+			var re = /circle/g;
+
+			if ( re.test(e.target.getAttribute('class')) ) {
+				//debug('circle clicked');
+
+				commands.click(e);
+			}
+
+		}
+	};
+
+	// TODO: execute on first resize event, then don't execute again for 500ms. if event is fired in that time, queue it.
+	var screenManager = {
+		register : function () {
+			window.onresize = function (e) {
+
+			}
+		}
+
+	};
+
+	actions = {
+		updateStats : function (data) {
+			//console.log('updateStats', data);
+
+			stats = data;
+
+			var statsEl = DOMQuery('#stats').element,
+				output = '';
+
+			for (var key in data) {
+				output += '<p>' + key + ': ' + data[key] + '</p>'
+			}
+			//output += '<p>players: ' + data.players + '</p>';
+			//output += '<p>games: ' + data.games + '</p>';
+
+			statsEl.innerHTML = output;
+
+			setTimeout(commands.getStats, 5000);
+		},
+		start 		: function (data) {
+			//TODO: we have joined. now start the game
+			console.log('start', data);
+
+			gameStarted = true;
+
+			debug('game \'' + data.game + '\' starts in ' + data.startTime / 1000 + 's');
+
+			//debug('opponents: ' + data.opponents.reduce(function (a, b) { return a.name }));
+		},
+		spawn 		: function (data) {
+			if (!gameStarted) {
+				return false;
+			}
+
+			//TODO: create circle with given data
+			console.log('spawn', data);
+
+			putCircle(data.x, data.y, data.scale);
+		},
+		destroy 	: function (data) {
+			//TODO: remove circle
+			console.log('destroy', data);
+
+			if (data.success) {
+				updateScore(1);
+			}
+
+			// TODO: identify unique objects instead of removing all of them (optionally, remove all.. when game stops for example)
+			var els = game.element.getElementsByClassName('circle');
+			for (var i = 0, el; el = els[i]; i++) {
+				destroyCircle(el);
+			}
+
+			//debug('turn took ' + Math.round(( new Date() - roundTime) / 10) / 100 + 'seconds');
+		},
+		stop 		: function (data) {
+			// TODO: stop current game
+			console.log('stop', data);
+			debug(data.message);
+
+			gameStarted = false;
+			destroyAll();
+		}
+	};
+
+	commands = {
+		getStats	: function () {
+			socket.emit('react', {
+				action 	: 'getStats'
+			});
+		},
+		join 		: function () {
+			socket.emit('react', {
+				action 	: 'join'
+			})
+		},
+		click 		: function (e) {
+
+			var off = Math.round(e.target.clientWidth),
+				clickX = (e.clientX / ((document.documentElement.clientWidth - off) / 100)).toFixed(1),
+				clickY = (e.clientY / ((document.documentElement.clientHeight - off) / 100)).toFixed(1);
+
+			socket.emit('react', {
+				action 	: 'click',
+				data 	: {
+					x	: clickX,
+					y 	: clickY
+				}
+			});
+		}
+	};
+
+	var connect = function () {
+		socket = io.connect('');
+
+		// route 'react' actions
+		socket.on('react', function (data) {
+			actions[data.action].apply(actions[data.action], [data.data]);
+		});
+
+		socket.on('connect', function () {
+			console.log('connected', socket);
+
+			// send startup commands
+			commands.join();
+			commands.getStats();
+		});
+
+		socket.on('disconnect', function () {
+			console.log('disconnect', socket);
+
+			destroyAll();
+		});
+	};
+
+	var setup = function () {
+
+		connect();
+
+		templates = DOMQuery('#templates');
+
+		outputEl = document.getElementById('output');
+		game = DOMQuery('#game');
+
+		bindUserInput(game.element);
+
+		// TODO: wtf?
+		/*
+		console.log(templates);
+
+		templates.prototype.aaaa = function (event, callback) {
+			console.log(this);
+		}
+		*/
+	};
+
+	var debug = function (msg) {
+		outputEl.innerHTML += '<p>' + msg + '</p>';
+		
+		outputEl.scrollTop = outputEl.scrollHeight;
+	};
+
+	var getTemplate = function (name) {
+		var template = templates.element.getElementsByClassName(name);
+
+		if (template.length > 1) {
+			debug('warning: template ' + name + ' was found more than once. using [0].');
+		}
+
+		return template[0].cloneNode(true);
+	};
+
+	var putCircle = function (x, y, scale) {
+		var circle = getTemplate('circle'),
+			scale = scale; //.5 + Math.random() * .5;
+
+//console.log(x, y);
+
+		game.element.appendChild(circle);
+
+		// TODO: make circle scale factor based (and proportional to relative coordinates)
+		var off = Math.round(circle.clientWidth),
+			w = game.element.clientWidth - off, 
+			h = game.element.clientHeight - off,
+			x = Math.round((w / 100) * x), //Math.floor(Math.random() * w), 
+			y = Math.round((h / 100) * y); //Math.floor(Math.random() * h);
+
+		//console.log(document.documentElement.width);
+		//console.log(circle.clientWidth * (scale));
+		
+		circle.setAttribute('class', circle.getAttribute('class') + ' in');
+		circle.setAttribute('style', 'left:' + x + 'px; top:' + y + 'px;' + '-webkit-transform: scale(' + scale + ');');
+		debug('put circle @ x:' + x + ', y:' + y);
+
+		//console.log(circle.clientWidth);
+	};
+
+	var destroyAll = function () {
+		var els = game.element.getElementsByClassName('circle');
+		console.log('destroyAll', els);
+
+		for (var i = 0, el; el = els[i]; i++) {
+			destroyCircle(el);
+		}
+		/*
+		for (var key in els) {
+			console.log('key in els:', key);
+
+			if (els.hasOwnProperty(key)) {
+				console.log('circle:', els[key]);
+				destroyCircle(els[key]);
+			} else {
+				console.log('!hasOwnProperty', key);
+			}
+		}
+		*/
+	};
+
+	var destroyCircle = function (el) {
+		console.log('destroyCircle', el);
+
+		el.setAttribute('class', el.getAttribute('class') + ' out');
+
+		setTimeout(function() {
+			if (game.element.contains(el)) {
+				game.element.removeChild(el);
+			}
+		}, 500);
+
+		roundTime = new Date();
+	};
+
+	var updateScore = function (amount) {
+		stats.score = stats.score + amount;
+
+		actions.updateStats(stats);
+	};
+
+	var init = function () {
+		setup();
+
+		/*
+		for (var i = 0; i < 1; i++) {
+			putCircle();
+		}
+		*/
+
+		roundTime = new Date();
+	};
+
+	var publicObject = {
+		init	: init
+	};
+
+	return publicObject;
+}());
+
+window.onload = function () {
+	react.init();
+};
+
+
+</script>
+</body>
+</html>
